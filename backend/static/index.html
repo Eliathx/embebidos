@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Parqueadero RFID</title>
+</head>
+<body>
+  <h1>Parqueadero RFID</h1>
+  <p>Dentro: <span id="dentro">0</span> | Registros: <span id="total">0</span></p>
+  <button onclick="load()">Refrescar</button>
+
+  <table border="1">
+    <thead>
+      <tr>
+        <th>#</th><th>Nombre</th><th>UID</th><th>Entrada</th><th>Salida</th><th>Duracion (min)</th><th>Estado</th>
+      </tr>
+    </thead>
+    <tbody id="rows">
+      <tr><td colspan="7">Cargando...</td></tr>
+    </tbody>
+  </table>
+
+  <script>
+    async function load() {
+      const data = await (await fetch("/sessions")).json();
+      document.getElementById("total").textContent = data.length;
+      document.getElementById("dentro").textContent = data.filter(r => r.status === "dentro").length;
+      const tbody = document.getElementById("rows");
+      if (data.length === 0) {
+        tbody.innerHTML = "<tr><td colspan='7'>Sin registros todavia.</td></tr>";
+        return;
+      }
+      tbody.innerHTML = data.map(r => `
+        <tr>
+          <td>${r.id}</td>
+          <td>${r.name ?? "?"}</td>
+          <td>${r.uid}</td>
+          <td>${r.entry_time ?? "-"}</td>
+          <td>${r.exit_time ?? "-"}</td>
+          <td>${r.duration_min ?? "-"}</td>
+          <td>${r.status}</td>
+        </tr>`).join("");
+    }
+    load();
+    setInterval(load, 3000);
+  </script>
+</body>
+</html>
