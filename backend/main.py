@@ -1,11 +1,15 @@
 """
-POST /scan con el UID de la tarjeta.
-- Si la tarjeta NO tiene una sesion abierta -> registra ENTRADA (status 'dentro')
-- Si la tarjeta SI tiene una sesion abierta -> registra SALIDA (status 'fuera')
-  y calcula la duracion.
+Backend del parqueadero inteligente.
 
-El firmware (ESP8266) solo lee el UID, hace el POST y pinta lo que
-venga en la respuesta (mensaje LCD, color RGB, icono de la matriz).
+Arduino MEGA 2560 (logica local) --Serial1--> Wemos D1 Mini --HTTP--> aqui
+
+- POST /scan      : UID de la tarjeta. Sin sesion abierta -> ENTRADA
+                    ('dentro'); con sesion abierta -> SALIDA ('fuera')
+                    y calcula la duracion.
+- POST /telemetry : estado en vivo del hardware (puestos libres/ocupados,
+                    presencia del PIR). Lo envia el MEGA cada 3 s.
+- POST /event     : eventos sueltos (PIR, cambio de puesto, arranque).
+- GET  /status    : lo que consume el panel web para las tarjetas en vivo.
 """
 
 import sqlite3
@@ -65,6 +69,25 @@ def init_db():
 def now():
     return datetime.now(timezone.utc)
 
+
+# Estado en vivo del hardware (volatil: se repuebla cada 3 s con /telemetry)
+HW_STATE = {
+    "free": None,
+    "total": None,
+    "slots": "",
+    "presence": 0,
+    "last_seen": None,
+    "events": [],  # ultimos eventos, mas nuevos primero
+}
+
+
+def hw_online() -> bool:
+    """El MEGA manda telemetria cada 3 s: 10 s sin datos => offline."""
+    if HW_STATE["last_seen"] is None:
+        return False
+    delta = now() - datetime.fromisoformat(HW_STATE["last_seen"])
+    return delta.total_seconds() < 10
+
 app = FastAPI(title="Parqueadero RFID")
 app.add_middleware(
     CORSMiddleware,
@@ -77,6 +100,18 @@ init_db()
 
 class ScanIn(BaseModel):
     uid: str
+
+
+class TelemetryIn(BaseModel):
+    free: int
+    total: int
+    slots: str = ""      # mascara de ocupacion, un caracter por puesto: "010"
+    presence: int = 0    # 1 si el PIR detecto un vehiculo hace poco
+
+
+class EventIn(BaseModel):
+    kind: str            # SLOT / PIR / BOOT
+    data: str = ""
 
 
 @app.post("/scan")
@@ -143,6 +178,56 @@ def scan(payload: ScanIn):
         "duration_min": duration_min,
         "rgb": "blue",
         "matrix": "arrow_down",
+    }
+
+
+@app.post("/telemetry")
+def telemetry(payload: TelemetryIn):
+    """Estado en vivo que envia el MEGA (via Wemos) cada 3 segundos."""
+    HW_STATE.update(
+        free=payload.free,
+        total=payload.total,
+        slots=payload.slots,
+        presence=payload.presence,
+        last_seen=now().isoformat(),
+    )
+    return {"ok": True}
+
+
+@app.post("/event")
+def event(payload: EventIn):
+    """Eventos sueltos del hardware: PIR, cambio de puesto, arranque."""
+    HW_STATE["last_seen"] = now().isoformat()
+    HW_STATE["events"].insert(
+        0, {"kind": payload.kind, "data": payload.data, "at": now().isoformat()}
+    )
+    del HW_STATE["events"][20:]          # solo guardamos los ultimos 20
+    return {"ok": True}
+
+
+@app.get("/status")
+def status():
+    """Resumen para el panel web: hardware + ocupacion + vehiculos dentro."""
+    conn = get_db()
+    dentro = conn.execute(
+        "SELECT COUNT(*) AS n FROM sessions WHERE exit_time IS NULL"
+    ).fetchone()["n"]
+    total_reg = conn.execute("SELECT COUNT(*) AS n FROM sessions").fetchone()["n"]
+    conn.close()
+
+    total = HW_STATE["total"]
+    free = HW_STATE["free"]
+    return {
+        "online": hw_online(),
+        "last_seen": HW_STATE["last_seen"],
+        "free": free,
+        "total": total,
+        "occupied": (total - free) if (total is not None and free is not None) else None,
+        "slots": [c == "1" for c in HW_STATE["slots"]],
+        "presence": bool(HW_STATE["presence"]),
+        "inside": dentro,
+        "records": total_reg,
+        "events": HW_STATE["events"][:8],
     }
 
 

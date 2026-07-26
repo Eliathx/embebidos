@@ -12,28 +12,21 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 http://localhost:8000/
 
- 
+> Guía completa de hardware + firmware: ver el [README raíz](../README.md).
+
 ```
-Tarjeta -> RC522 -> ESP8266 --POST /scan {uid}--> FastAPI <-> SQLite
-                                                     |
-                                               Panel web (/)
+Tarjeta -> RC522 -> MEGA 2560 --Serial1--> Wemos D1 Mini --POST /scan--> FastAPI <-> SQLite
+                                                                            |
+                                                                      Panel web (/)
 ```
 
-1. El ESP8266 lee el UID de la tarjeta.
+1. El Mega lee el UID de la tarjeta y lo manda al Wemos por Serial1.
 2. Hace un POST a `/scan` con `{"uid": "..."}`.
 3. El backend decide:
    - Sin sesión abierta para ese UID → **entrada** (estado `dentro`).
    - Con sesión abierta → **salida** (estado `fuera`, calcula duración).
    - UID no registrado → `denied`.
 4. Responde con el estado, y el panel web se actualiza solo.
-
-## Programar el ESP8266
-
-1. Conectar al WiFi (`ESP8266WiFi.h`).
-2. Leer el UID de la tarjeta con el RC522 (`MFRC522.h`, por SPI).
-3. POST a `http://<IP-del-PC>:8000/scan` con el body `{"uid":"..."}`
-   (`ESP8266HTTPClient.h`).
-4. Leer la respuesta JSON y mostrarla (LCD, LED, etc.).
 
 
 ## Probar en Postman
@@ -52,12 +45,15 @@ con la duración. Un UID que no exista da `denied`.
 
 ## Endpoints
 
-| Método | Ruta        | Descripción                          |
-|--------|-------------|--------------------------------------|
-| POST   | `/scan`     | Registra entrada/salida según el UID |
-| GET    | `/sessions` | Lista todos los registros            |
-| GET    | `/inside`   | Vehículos dentro ahora               |
-| GET    | `/`         | Panel web                            |
+| Método | Ruta         | Descripción                                   |
+|--------|--------------|-----------------------------------------------|
+| POST   | `/scan`      | Registra entrada/salida según el UID          |
+| POST   | `/telemetry` | Estado en vivo del hardware (Mega, cada 3 s)  |
+| POST   | `/event`     | Eventos sueltos: `PIR`, `SLOT`, `BOOT`        |
+| GET    | `/status`    | Resumen del panel: libres/ocupados/PIR/online |
+| GET    | `/sessions`  | Lista todos los registros                     |
+| GET    | `/inside`    | Vehículos dentro ahora                        |
+| GET    | `/`          | Panel web                                     |
 
 ## Tarjetas de demo
 
